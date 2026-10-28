@@ -1,0 +1,81 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Download real gradle-wrapper.jar
+        run: |
+          # Download the official gradle wrapper jar if placeholder is too small
+          JAR=gradle/wrapper/gradle-wrapper.jar
+          SIZE=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
+          if [ "$SIZE" -lt 50000 ]; then
+            echo "Downloading real gradle-wrapper.jar..."
+            curl -sL "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
+              -o "$JAR" || \
+            wget -q "https://services.gradle.org/distributions/gradle-8.4-bin.zip" -O /tmp/g.zip && \
+              unzip -p /tmp/g.zip "gradle-8.4/lib/plugins/gradle-wrapper-*.jar" > "$JAR" 2>/dev/null || true
+            echo "Jar size: $(stat -c%s $JAR 2>/dev/null || echo unknown)"
+          fi
+          # Use gradle binary directly if jar still missing
+          if [ $(stat -c%s "$JAR" 2>/dev/null || echo 0) -lt 50000 ]; then
+            echo "Using system gradle to regenerate wrapper"
+            gradle wrapper --gradle-version=8.4 --distribution-type=bin || true
+          fi
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Build Release APK (unsigned)
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LKL-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LKL-release-${{ github.run_number }}
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: List outputs
+        if: always()
+        run: |
+          echo "=== APK outputs ==="
+          find app/build/outputs -name "*.apk" -exec ls -lh {} \; 2>/dev/null || echo "No APKs found"

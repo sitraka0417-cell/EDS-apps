@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'mg.sitraka.lkl'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "mg.sitraka.lkl"
+        minSdk 21
+        targetSdk 34
+        versionCode 5
+        versionName "2.3"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+        }
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
+        }
+    }
+}
+
+dependencies {
+    // Aucune dépendance externe — tout en Android SDK natif
+}
