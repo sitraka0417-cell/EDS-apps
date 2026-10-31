@@ -50,6 +50,7 @@ import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -132,7 +133,7 @@ public class MainActivity extends Activity {
 
     static final String[] SOKAJY_NAMES = {"Lesona Lehibe", "Lesona Tanora Zokiny", "Lesona Zatovo"};
     static final boolean[] HAS_TSIANJERY = {true, false, true};
-    static final String[] DAYS_MG = {"Alahady", "Alatsinainy", "Talata", "Alarobia", "Alakamisy", "Zoma", "Asabotsy"};
+    static final String[] DAYS_MG = {"Alahady", "Alatsinainy", "Talata", "Alarobia", "Alakamisy", "Zoma", "Sabotsy"};
     static final String[] MONTHS_MG = {"Janoary", "Febroary", "Marsa", "Aprily", "May", "Jona", "Jolay",
             "Aogositra", "Septambra", "Oktobra", "Novambra", "Desambra"};
 
@@ -210,10 +211,6 @@ public class MainActivity extends Activity {
                     if (dx < -dp(60) && Math.abs(dx) > 1.5f * Math.abs(dy)) closeDrawer();
                     return false;
                 }
-                if (mPage != 3) return false;
-                if (Math.abs(dx) > dp(90) && Math.abs(dx) > 2 * Math.abs(dy) && Math.abs(vx) > dp(250)) {
-                    swipeDay(dx < 0 ? 1 : -1);
-                }
                 return false;
             }
         });
@@ -223,10 +220,103 @@ public class MainActivity extends Activity {
         }, 900);
     }
 
+    // ── Swipe : ny pejy manaraka ny rantsan-tanana, dia misy pejy miala sy pejy tonga ──
+    float mDownX, mDownY;
+    boolean mSwiping, mSwipeOk, mActionModeOn;
+    VelocityTracker mSwipeVt;
+
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if ((mPage == 3 || mDrawer != null) && mGesture != null) mGesture.onTouchEvent(ev);
+        if (mDrawer != null) {
+            if (mGesture != null) mGesture.onTouchEvent(ev);
+            return super.dispatchTouchEvent(ev);
+        }
+        if (mPage != 3) return super.dispatchTouchEvent(ev);
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                mDownX = ev.getRawX();
+                mDownY = ev.getRawY();
+                mSwiping = false;
+                mSwipeOk = !mActionModeOn && !touchInFocusedEdit(ev);
+                if (mSwipeVt != null) mSwipeVt.recycle();
+                mSwipeVt = VelocityTracker.obtain();
+                mSwipeVt.addMovement(ev);
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (mSwipeVt != null) mSwipeVt.addMovement(ev);
+                if (!mSwiping && mSwipeOk && !mActionModeOn) {
+                    float dx = ev.getRawX() - mDownX, dy = ev.getRawY() - mDownY;
+                    int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+                    if (Math.abs(dx) > slop * 2 && Math.abs(dx) > 1.7f * Math.abs(dy)) {
+                        mSwiping = true;
+                        MotionEvent c = MotionEvent.obtain(ev);
+                        c.setAction(MotionEvent.ACTION_CANCEL);
+                        super.dispatchTouchEvent(c);
+                        c.recycle();
+                    }
+                }
+                if (mSwiping) {
+                    dragPage(ev.getRawX() - mDownX);
+                    return true;
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (mSwipeVt != null) mSwipeVt.addMovement(ev);
+                if (mSwiping) {
+                    mSwiping = false;
+                    endDrag(ev.getRawX() - mDownX, ev.getActionMasked() == MotionEvent.ACTION_CANCEL);
+                    return true;
+                }
+                if (mSwipeVt != null) { mSwipeVt.recycle(); mSwipeVt = null; }
+                break;
+            default:
+                break;
+        }
         return super.dispatchTouchEvent(ev);
+    }
+
+    boolean touchInFocusedEdit(MotionEvent ev) {
+        View f = getCurrentFocus();
+        if (!(f instanceof EditText)) return false;
+        int[] loc = new int[2];
+        f.getLocationOnScreen(loc);
+        float x = ev.getRawX(), y = ev.getRawY();
+        return x >= loc[0] && x <= loc[0] + f.getWidth() && y >= loc[1] && y <= loc[1] + f.getHeight();
+    }
+
+    View curPage() { return mRoot.getChildCount() > 0 ? mRoot.getChildAt(mRoot.getChildCount() - 1) : null; }
+
+    /** Ao anatin'ny herinandro iray ihany : tsy mifindra amin'ny herinandro hafa. */
+    boolean canGo(int dir) {
+        if (!mDaysKey.equals(mQuarterId + "/" + mLessonId)) return false;
+        int t = mDayNum + dir;
+        return t >= 1 && t <= mDays.size();
+    }
+
+    void dragPage(float dx) {
+        View p = curPage();
+        if (p == null) return;
+        int dir = dx < 0 ? 1 : -1;
+        p.setTranslationX(canGo(dir) ? dx : dx * 0.28f);   // fanoherana manify any amin'ny farany
+    }
+
+    void endDrag(float dx, boolean cancelled) {
+        View p = curPage();
+        float vx = 0f;
+        if (mSwipeVt != null) {
+            mSwipeVt.computeCurrentVelocity(1000);
+            vx = mSwipeVt.getXVelocity();
+            mSwipeVt.recycle();
+            mSwipeVt = null;
+        }
+        if (p == null) return;
+        int w = Math.max(1, mRoot.getWidth());
+        int dir = dx < 0 ? 1 : -1;
+        boolean commit = !cancelled && canGo(dir)
+                && (Math.abs(dx) > w * 0.28f || (Math.abs(vx) > 900f && (vx < 0) == (dx < 0)));
+        if (commit) buildReader(mQuarterId, mLessonId, mDayNum + dir, dir);
+        else p.animate().translationX(0f).setDuration(240).setInterpolator(new DecelerateInterpolator(1.8f)).start();
     }
 
     @Override
@@ -1633,6 +1723,9 @@ public class MainActivity extends Activity {
     // PAGE DE LECTURE (header sary + lohateny + daty, swipe, note)
     // ══════════════════════════════════════════════════════════════════════
     void buildReader(final String qid, final String lid, final int dayNum, final int dir) {
+        final boolean slide = dir != 0 && mPage == 3 && mRoot.getChildCount() > 0;
+        mActionModeOn = false;
+        mSwiping = false;
         final int tok = ++mPageToken;
         mPage = 3;
         mQuarterId = qid;
@@ -1641,8 +1734,10 @@ public class MainActivity extends Activity {
         mDayHtml = null;
         applyTheme(qid.endsWith("-cc"), qid.equals(mLessonsQid) ? mQColorP : 0);
         final int youthTop = lighten(mThAccent, 0.62f);
-        mRoot.removeAllViews();
-        mDrawer = null;
+        if (!slide) {
+            mRoot.removeAllViews();
+            mDrawer = null;
+        }
         final FrameLayout page = new FrameLayout(this);
         page.setBackgroundColor(C_BG);
         mRoot.addView(page, new FrameLayout.LayoutParams(MATCH, MATCH));
@@ -1690,6 +1785,15 @@ public class MainActivity extends Activity {
         barTitle.setAlpha(0f);
         row.addView(barTitle, lpm(0, WRAP, dp(14), 0, dp(8), 0));
         ((LinearLayout.LayoutParams) barTitle.getLayoutParams()).weight = 1f;
+        int lnum = 0;
+        try { lnum = Integer.parseInt(lid.replaceAll("\\D", "")); } catch (Exception ignored) { }
+        if (lnum > 0) {
+            TextView lb = tv("L" + lnum, 15, 0xFFFFFFFF, true);
+            lb.setGravity(Gravity.CENTER);
+            lb.setBackgroundDrawable(rrs(0x66000000, dp(14), dp(1), 0x33FFFFFF));
+            lb.setPadding(dp(13), 0, dp(13), 0);
+            row.addView(lb, lpm(WRAP, dp(44), 0, 0, dp(8), 0));
+        }
         row.addView(iconBtn(Ico.CAL, v -> showDatePicker()), lpm(dp(44), dp(44), 0, 0, dp(8), 0));
         row.addView(iconBtn(Ico.AA, v -> showTextSizeDialog()), new LinearLayout.LayoutParams(dp(44), dp(44)));
 
@@ -1703,10 +1807,17 @@ public class MainActivity extends Activity {
         dlp.bottomMargin = dp(14);
         page.addView(mDotsRow, dlp);
 
-        if (dir != 0) {
-            page.setTranslationX(dir * dp(120));
-            page.setAlpha(0f);
-            page.animate().translationX(0).alpha(1f).setDuration(190).start();
+        if (slide) {
+            final int wpx = Math.max(mRoot.getWidth(), getResources().getDisplayMetrics().widthPixels);
+            final List<View> olds = new ArrayList<>();
+            for (int i = 0; i < mRoot.getChildCount() - 1; i++) olds.add(mRoot.getChildAt(i));
+            page.setTranslationX(dir * wpx);
+            DecelerateInterpolator ip = new DecelerateInterpolator(1.7f);
+            for (View o : olds) o.animate().translationX(-dir * wpx).setDuration(270).setInterpolator(ip).start();
+            page.animate().translationX(0f).setDuration(270).setInterpolator(ip)
+                    .withEndAction(new Runnable() {
+                        @Override public void run() { for (View o : olds) mRoot.removeView(o); }
+                    }).start();
         }
 
         final boolean[] coverLoaded = {false};
@@ -1817,23 +1928,6 @@ public class MainActivity extends Activity {
             dot.setBackgroundDrawable(rr(i == cur ? C_ACCENT : 0x66FFFFFF, dp(3)));
             mDotsRow.addView(dot, lpm(i == cur ? dp(16) : dp(6), dp(6), dp(3), 0, dp(3), 0));
         }
-    }
-
-    void swipeDay(int dir) {
-        if (mPage != 3) return;
-        int n = mDays.size();
-        int target = mDayNum + dir;
-        if (n > 0 && target >= 1 && target <= n) { buildReader(mQuarterId, mLessonId, target, dir); return; }
-        List<Lesson> ls = mLessons;
-        int idx = -1;
-        for (int i = 0; i < ls.size(); i++) if (ls.get(i).id.equals(mLessonId)) idx = i;
-        if (idx < 0) return;
-        int ni = idx + dir;
-        if (ni < 0 || ni >= ls.size()) {
-            toast(dir > 0 ? "Farany ity telovolana ity" : "Voalohany ity telovolana ity");
-            return;
-        }
-        buildReader(mQuarterId, ls.get(ni).id, dir > 0 ? 1 : 7, dir);
     }
 
     void renderCurrentDay() {
@@ -2225,6 +2319,7 @@ public class MainActivity extends Activity {
             applyHl(t, loadHl(hlKey));
             t.setCustomSelectionActionModeCallback(new ActionMode.Callback() {
                 @Override public boolean onCreateActionMode(ActionMode m, Menu menu) {
+                    mActionModeOn = true;
                     menu.add(0, ID_HL, 0, "Lokoina");
                     menu.add(0, ID_UNHL, 1, "Esory ny loko");
                     return true;
@@ -2244,7 +2339,7 @@ public class MainActivity extends Activity {
                     m.finish();
                     return true;
                 }
-                @Override public void onDestroyActionMode(ActionMode m) { }
+                @Override public void onDestroyActionMode(ActionMode m) { mActionModeOn = false; }
             });
         }
         return t;
